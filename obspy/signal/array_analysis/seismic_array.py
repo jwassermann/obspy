@@ -12,6 +12,7 @@ from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 from future.builtins import *  # NOQA
 
+from collections import defaultdict
 import collections
 import copy
 import math
@@ -31,14 +32,18 @@ from obspy.core.event.event import Event
 from obspy.core.event.origin import Origin
 from obspy.core.inventory import Inventory
 from obspy.core.util import AttribDict
-from obspy.geodetics import gps2dist_azimuth, degrees2kilometers
+from obspy.geodetics import gps2dist_azimuth, degrees2kilometers,locations2degrees
 from obspy.imaging import cm
 from obspy.imaging.cm import obspy_sequential
 from obspy.signal.headers import clibsignal
 from obspy.signal.invsim import cosine_taper
 from obspy.signal.util import util_geo_km, next_pow_2
+from obspy.taup import TauPyModel
 
 from obspy.signal.array_analysis.beamforming_result import BeamformerResult
+from obspy.signal.array_analysis.beamforming_result import plot_array_analysis
+
+KM_PER_DEG = 111.1949
 
 
 def _get_stream_offsets(stream, stime, etime):
@@ -467,15 +472,16 @@ class SeismicArray(object):
 
         time_shift_tbl = {}
         slownesses = np.arange(sll, slm, sls)
+        # we have to bring slowness (ray based coordinate system) and baz (oposite direction) together -slowness
         time_shift_tbl[None] = slownesses
-
+        
         for key, value in list(geom.items()):
-            time_shifts = slownesses * (value["x"] * math.sin(baz) +
+            time_shifts = -slownesses/KM_PER_DEG * (value["x"] * math.sin(baz) +
                                         value["y"] * math.cos(baz))
 
             if static3d:
                 try:
-                    inc = np.arcsin(vel_cor * slownesses)
+                    inc = np.arcsin(vel_cor * slownesses/KM_PER_DEG)
                 except ValueError:
                     # if vel_cor given as dict:
                     inc = np.pi / 2.0
@@ -525,9 +531,9 @@ class SeismicArray(object):
             time_shift_tbl = np.empty((nstat, grdpts_x, grdpts_y),
                                       dtype="float32")
             for k in range(grdpts_x):
-                sx = sllx + k * sls
+                sx = (sllx + k * sls)/KM_PER_DEG
                 for l in range(grdpts_y):
-                    sy = slly + l * sls
+                    sy = (slly + l * sls)/KM_PER_DEG
                     slow = np.sqrt(sx * sx + sy * sy)
                     if vel_cor * slow <= 1.:
                         inc = np.arcsin(vel_cor * slow)
@@ -541,8 +547,8 @@ class SeismicArray(object):
             return time_shift_tbl
         # optimized version
         else:
-            mx = np.outer(geometry[:, 0], sllx + np.arange(grdpts_x) * sls)
-            my = np.outer(geometry[:, 1], slly + np.arange(grdpts_y) * sls)
+            mx = np.outer(geometry[:, 0], (sllx + np.arange(grdpts_x) * sls)/KM_PER_DEG)
+            my = np.outer(geometry[:, 1], (slly + np.arange(grdpts_y) * sls)/KM_PER_DEG)
             return np.require(
                 mx[:, :, np.newaxis].repeat(grdpts_y, axis=2) +
                 my[:, np.newaxis, :].repeat(grdpts_x, axis=1),
@@ -551,6 +557,7 @@ class SeismicArray(object):
     def vespagram(self, stream, event_or_baz, sll, slm, sls, starttime,
                   endtime, reference='center_of_gravity', method="DLS",
                   nthroot=1, static3d=False, vel_cor=4.0, wiggle_scale=1.0,
+                  align=False, align_phase=['P', 'Pdiff'],
                   density_cmap=obspy_sequential, plot="wiggle", show=True):
         """
         :type event_or_baz: float or :class:`~obspy.core.event.event.Event` or
@@ -588,6 +595,7 @@ class SeismicArray(object):
             baz = gps2dist_azimuth(
                 center_['latitude'], center_['longitude'],
                 origin_['latitude'], origin_['longitude'])[1]
+
         elif isinstance(event_or_baz, Origin):
             origin_ = event_or_baz
             baz = gps2dist_azimuth(
@@ -595,6 +603,15 @@ class SeismicArray(object):
                 origin_['latitude'], origin_['longitude'])[1]
         else:
             baz = float(event_or_baz)
+            if align:
+                msg = "For the alin option an event has to be specified"
+                raise ValueError(msg)
+
+        if align:
+            for item in phase_name:
+                stream=align_phases(self,stream, origin_, item, vel_model='ak135')
+
+
 
         time_shift_table = self._get_timeshift_baz(
             sll, slm, sls, baz, latitude=center_['latitude'],
@@ -620,21 +637,39 @@ class SeismicArray(object):
             npts = len(beams[0])
             t = np.arange(0, npts/sampling_rate, delta)
             max_amp = np.max(np.abs(beams))
-            scale = 2.0 * sls / max_amp
+            scale = sls / max_amp
             scale *= wiggle_scale
 
             if plot == 'wiggle':
-                for i, (beam, slowness) in enumerate(zip(beams, slownesses)):
-                    if i == beam_max:
-                        color = "r"
-                        zorder = 2
+                for i_,beam in enumerate(beams):
+                    if i_ == beam_max:
+                        ax.plot(t, slownesses[i_] + scale*beams[i_], 'r',
+                             zorder=1)
                     else:
-                        color = "k"
-                        zorder = 1
-                    ax.plot(t, slowness + scale * beam,
-                            color, zorder=zorder)
-
+                        ax.plot(t, slownesses[i_] + scale*beams[i_], 'k',
+                             zorder=-1)
+                ax.set_xlabel('Time [s]')
+                ax.set_ylabel('slowness [s/deg]')
                 ax.set_xlim(t[0], t[-1])
+                data_minmax = ax.yaxis.get_data_interval()
+                minmax = [min(slownesses[0], data_minmax[0]), max(slownesses[-1], data_minmax[1])]
+                ax.set_ylim(*minmax)
+
+#                for i, (beam, slowness) in enumerate(zip(beams, slownesses)):
+#                    if i == beam_max:
+#                        color = "r"
+#                        zorder = 2
+#                    else:
+#                        color = "k"
+#                        zorder = 1
+#                    ax.plot(t, slowness + scale * beam,
+#                            color, zorder=zorder)
+#
+#                ax.set_xlim(t[0], t[-1])
+#                data_minmax = ax.yaxis.get_data_interval()
+#                minmax = [min(slownesses[0], data_minmax[0]), max(slownesses[-1], data_minmax[1])]
+#                ax.set_ylim(*minmax)
+
             elif plot == 'density':
                 extent = (t[0] - delta * 0.5, t[-1] + delta * 0.5,
                           slownesses[0] - sls * 0.5,
@@ -644,7 +679,7 @@ class SeismicArray(object):
                           interpolation="nearest", extent=extent,
                           aspect='auto')
 
-            ax.set_ylabel('slowness [s/XXX]')
+            ax.set_ylabel('slowness [s/deg]')
             ax.set_xlabel('Time [s]')
             if show:
                 plt.show()
@@ -1096,11 +1131,11 @@ class SeismicArray(object):
 
             # now let's do the plotting
             if "baz_slow_map" in plots:
-                _plot_array_analysis(outarr, sllx, slmx, slly, slmy, sls,
+                plot_array_analysis(outarr, sllx, slmx, slly, slmy, sls,
                                      filename_patterns, True, method,
                                      st_workon, starttime, wlen, endtime)
             if "slowness_xy" in plots:
-                _plot_array_analysis(outarr, sllx, slmx, slly, slmy, sls,
+                plot_array_analysis(outarr, sllx, slmx, slly, slmy, sls,
                                      filename_patterns, False, method,
                                      st_workon, starttime, wlen, endtime)
             plt.show()
@@ -1111,7 +1146,7 @@ class SeismicArray(object):
             self.inventory = invbkp
             shutil.rmtree(tmpdir)
 
-    def _attach_coords_to_stream(self, stream):
+    def _attach_coords_to_stream(self, stream,event=None):
         """
         Attaches dictionary with latitude, longitude and elevation to each
         trace in stream as `trace.stats.coords`. Takes into account local
@@ -1121,8 +1156,17 @@ class SeismicArray(object):
 
         for tr in stream:
             coords = geo[tr.id]
-            tr.stats.coordinates = \
-                AttribDict(dict(latitude=coords["latitude"],
+            if event:
+                event_lat = event.origins[0].latitude
+                event_lng = event.origins[0].longitude
+                dist = locations2degrees(coords["latitude"],coords["longitude"], event_lat, event_lng)
+                tr.stats.coordinates = \
+                    AttribDict(dict(latitude=coords["latitude"],
+                                longitude=coords["longitude"],
+                                elevation=coords["absolute_height_in_km"],distance=dist))
+            else:
+                tr.stats.coordinates = \
+                    AttribDict(dict(latitude=coords["latitude"],
                                 longitude=coords["longitude"],
                                 elevation=coords["absolute_height_in_km"]))
 
@@ -1895,7 +1939,7 @@ class SeismicArray(object):
         """
         import matplotlib.pyplot as plt
         ranges = np.arange(-lim, lim + step, step)
-        plt.pcolor(ranges, ranges, transff.T, cmap=cm)
+        plt.pcolor(ranges, ranges, transff.T, cmap=cm.viridis)
         plt.colorbar()
         plt.clim(vmin=0., vmax=1.)
         plt.xlim(-lim, lim)
@@ -2261,14 +2305,11 @@ class SeismicArray(object):
         if len(stream) != len(stream.select(sampling_rate=fs)):
             msg = 'All traces must have same sampling rate.'
             raise ValueError(msg)
-
         mini = min(value.min() for key, value in time_shift_table.items()
                    if key is not None)
-        maxi = min(value.min() for key, value in time_shift_table.items()
+        maxi = max(value.max() for key, value in time_shift_table.items()
                    if key is not None)
-        # mini = min(min(i.values()) for i in list(time_shift_table.values()))
-        # maxi = max(max(i.values()) for i in list(time_shift_table.values()))
-        spoint, _ = _get_stream_offsets(stream, (starttime - mini),
+        spoint, _etime = _get_stream_offsets(stream, (starttime - mini),
                                         (endtime - maxi))
 
         # time shift table has slowness array under key `None`
@@ -2278,6 +2319,7 @@ class SeismicArray(object):
         ndat = int(((endtime - maxi) - (starttime - mini)) * fs)
         beams = np.zeros((len(slownesses), ndat), dtype='f8')
 
+        stream.detrend()
         max_beam = 0.0
         slow = 0.0
 
@@ -2290,12 +2332,10 @@ class SeismicArray(object):
             if method == 'DLS':
                 for _j, tr in enumerate(stream.traces):
                     station = tr.id
-                    s = spoint[_j] + int(time_shift_table[station][_i] *
-                                         fs + 0.5)
+                    s = spoint[_j] + int(time_shift_table[station][_i] * fs + 0.5)
                     shifted = tr.data[s: s + ndat]
                     singlet += 1. / len(stream) * np.sum(shifted * shifted)
-                    beams[_i] += 1. / len(stream) * np.power(np.abs(shifted),
-                                                             1. / nthroot) * \
+                    beams[_i] += 1. / len(stream) * np.power(np.abs(shifted),1./nthroot) * \
                         shifted / np.abs(shifted)
 
                 beams[_i] = np.power(np.abs(beams[_i]), nthroot) * \
@@ -2314,20 +2354,21 @@ class SeismicArray(object):
             elif method == 'PWS':
                 stack = np.zeros(ndat, dtype='c8')
                 nstat = len(stream)
-                raise NotImplementedError()
-                for i in range(nstat):
-                    s = spoint[i] + int(time_shift_table[i, _i] * fs + 0.5)
+                for _j, tr in enumerate(stream.traces):
+                    station = tr.id
+                    s = spoint[_j] + int(time_shift_table[station][_i] * fs + 0.5)
                     try:
-                        shifted = sp.signal.hilbert(stream[i].data[s:s + ndat])
+                        shifted = sp.signal.hilbert(tr.data[s:s + ndat])
                     except IndexError:
                         break
                     phase = np.arctan2(shifted.imag, shifted.real)
                     stack.real += np.cos(phase)
                     stack.imag += np.sin(phase)
                 coh = 1. / nstat * np.abs(stack)
-                for i in range(nstat):
-                    s = spoint[i] + int(time_shift_table[i, _i] * fs + 0.5)
-                    shifted = stream[i].data[s: s + ndat]
+                for _j, tr in enumerate(stream.traces):
+                    station = tr.id
+                    s = spoint[_j] + int(time_shift_table[station][_i] * fs + 0.5)
+                    shifted = tr.data[s: s + ndat]
                     singlet += 1. / nstat * np.sum(shifted * shifted)
                     beams[_i] += 1. / nstat * shifted * np.power(coh, nthroot)
                 bs = np.sum(beams[_i] * beams[_i])
@@ -2421,6 +2462,152 @@ class SeismicArray(object):
         geometry = geodict
         return geometry
 
+    def show_distance_plot(self,stream, event, starttime, endtime, plot_travel_times=True,vel_model='ak135'):
+        """
+        Plots distance dependent seismogramm sections.
+        :param stream: Waveforms for the array processing.
+        :type stream: :class:`obspy.core.stream.Stream`
+        :param event: earthquake position (lat/lon/depth) to which distance is calculated
+        :type event:
+        :param starttime: starttime of traces to be plotted
+        :type starttime: UTCDateTime
+        :param endttime: endttime of traces to be plotted
+        :type endttime: UTCDateTime
+        :param plot_travel_times: flag wether phases are marked as traveltime plots in the section 
+                              obspy.taup is used to calculate the phases
+        :type: bool
+        """
+        model = TauPyModel(model=vel_model)
+        stream = stream.slice(starttime=starttime, endtime=endtime).copy()
+        event_depth_in_km = event.origins[0].depth / 1000.0
+        event_time = event.origins[0].time
+
+        self._attach_coords_to_stream(stream,event)
+
+        cm = plt.cm.jet
+
+        stream.traces = sorted(stream.traces, key=lambda x: x.stats.coordinates.distance)[::-1]
+        # One color for each trace.
+        colors = [cm(_i) for _i in np.linspace(0, 1, len(stream))]
+
+        # Relative event times.
+        times_array = stream[0].times() + (stream[0].stats.starttime - event_time)
+       
+        distances = [tr.stats.coordinates.distance for tr in stream]
+        min_distance = min(distances)
+        max_distance = max(distances)
+        distance_range = max_distance - min_distance
+        stream_range = distance_range / 10.0
+
+        # Normalize data and "shift to distance".
+        stream.normalize()
+        for tr in stream:
+            tr.data *= stream_range
+            tr.data += tr.stats.coordinates.distance
+
+        plt.figure(figsize=(20, 12))
+        for _i, tr in enumerate(stream):
+            plt.plot(times_array, tr.data, label="%s.%s" % (tr.stats.network,
+                 tr.stats.station), color=colors[_i])
+        plt.grid()
+        plt.ylabel("Distance in degree to event")
+        plt.xlabel("Time in seconds since event")
+        plt.legend(loc="upper left")
+
+        dist_min, dist_max = plt.ylim()
+
+        if plot_travel_times:
+
+            distances = defaultdict(list)
+            ttimes = defaultdict(list)
+
+            for i in np.linspace(dist_min, dist_max, 100):
+                tts = model.get_travel_times(distance_in_degree=i, source_depth_in_km=event_depth_in_km)
+                for arrival in tts:
+                    name = arrival.name
+                    distances[name].append(i)
+                    ttimes[name].append(arrival.time)
+
+            for key in distances.iterkeys():
+                min_distance = min(distances[key])
+                max_distance = max(distances[key])
+                min_tt_time = min(ttimes[key])
+                max_tt_time = max(ttimes[key])
+
+                if min_tt_time >= times_array[-1] or \
+                    max_tt_time <= times_array[0] or \
+                    (max_distance - min_distance) < 0.8 * (dist_max - dist_min):
+                    continue
+                ttime = ttimes[key]
+                dist = distances[key]
+                if max(ttime) > times_array[0] + 0.9 * times_array.ptp():
+                    continue
+                plt.scatter(ttime, dist, s=0.5, zorder=-10, color="black", alpha=0.8)
+                plt.text(max(ttime) + 0.005 * times_array.ptp(),
+                           dist_max - 0.02 * (dist_max - dist_min),key)
+
+        plt.ylim(dist_min, dist_max)
+        plt.xlim(times_array[0], times_array[-1])
+        plt.title(event.short_str())
+
+        plt.show()
+
+
+    def align_phases(self,stream, event, phase_name, vel_model='ak135'):
+
+        if isinstance(event, Event):
+            origin_ = event.origins[0]
+
+        elif isinstance(event_or_baz, Origin):
+            origin_ = origins
+
+        starttime = max([tr.stats.starttime for tr in stream])
+        stt = starttime
+        endtime = min([tr.stats.endtime for tr in stream])
+        e = endtime
+        stream.trim(starttime, endtime)
+        shift = []
+        stream = stream.copy()
+        self._attach_coords_to_stream(stream,event)
+
+        stream.traces = sorted(stream.traces, key=lambda x: x.stats.coordinates.distance)[::-1]
+        model = TauPyModel(model=vel_model)
+
+        for tr in stream:
+            tt = model.get_travel_times(distance_in_degree=tr.stats.coordinates.distance, source_depth_in_km=origin_.depth / 1000.0)
+            for t in tt:
+                if t.name != phase_name:
+                    continue
+                tt_t = t.time
+                break
+            try:
+               travel = origin_.time.timestamp + tt_t
+               dtime = travel - stt.timestamp
+               shift.append(dtime)
+            except:
+               break
+        shift = np.asarray(shift)
+        shift -= shift[0]
+        self.shifttrace_freq(stream, -shift)
+        return stream
+
+    def shifttrace_freq(self,stream, t_shift):
+        if isinstance(stream, Stream):
+            for i, tr in enumerate(stream):
+                ndat = tr.stats.npts
+                samp = tr.stats.sampling_rate
+                nfft = next_pow_2(ndat)
+                nfft *= 2
+                tr1 = np.fft.rfft(tr.data, int(nfft))
+                for k in range(0, nfft/2,1):
+                    tr1[k] *= np.complex(
+                        np.cos((t_shift[i] * samp) * (k / float(nfft))
+                           * 2. * np.pi),
+                        -np.sin((t_shift[i] * samp) *
+                            (k / float(nfft)) * 2. * np.pi))
+
+                tr1 = np.fft.irfft(tr1, nfft)
+                tr.data = tr1[0:ndat]
 
 if __name__ == '__main__':
     import doctest

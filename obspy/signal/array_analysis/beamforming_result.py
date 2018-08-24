@@ -26,7 +26,7 @@ from obspy.geodetics import degrees2kilometers
 from obspy.imaging import cm
 
 
-def _plot_array_analysis(out, sllx, slmx, slly, slmy, sls,
+def plot_array_analysis(out, sllx, slmx, slly, slmy, sls,
                          filename_patterns, baz_plot, method,
                          st_workon, starttime, wlen, endtime):
     """
@@ -40,14 +40,14 @@ def _plot_array_analysis(out, sllx, slmx, slly, slmy, sls,
     t, rel_power, abs_power, baz, slow = out.T
     baz[baz < 0.0] += 360
     # now let's do the plotting
-    cmap = cm.rainbow
+    cmap = cm.viridis
     # we will plot everything in s/deg
-    slow = degrees2kilometers(slow)
-    sllx = degrees2kilometers(sllx)
-    slmx = degrees2kilometers(slmx)
-    slly = degrees2kilometers(slly)
-    slmy = degrees2kilometers(slmy)
-    sls = degrees2kilometers(sls)
+    #slow = degrees2kilometers(slow)
+    #sllx = degrees2kilometers(sllx)
+    #slmx = degrees2kilometers(slmx)
+    #slly = degrees2kilometers(slly)
+    #slmy = degrees2kilometers(slmy)
+    #sls = degrees2kilometers(sls)
 
     numslice = len(t)
     powmap = []
