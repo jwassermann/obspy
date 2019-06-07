@@ -20,6 +20,7 @@ import tempfile
 import os
 import shutil
 import warnings
+import sys
 
 import numpy as np
 import scipy as sp
@@ -44,7 +45,6 @@ from obspy.signal.array_analysis.beamforming_result import BeamformerResult
 from obspy.signal.array_analysis.beamforming_result import plot_array_analysis
 
 KM_PER_DEG = 111.1949
-
 
 def _get_stream_offsets(stream, stime, etime):
     """
@@ -777,7 +777,7 @@ class SeismicArray(object):
 
     def slowness_whitened_power(self, stream, frqlow, frqhigh,
                                 prefilter=True, plots=(),
-                                static3d=False, vel_corr=4.8, wlen=-1,
+                                static3d=False, array_response=False,vel_corr=4.8, wlen=-1,wfrac=1.,
                                 slx=(-10, 10), sly=(-10, 10), sls=0.5):
         """
         Slowness whitened power analysis.
@@ -808,7 +808,7 @@ class SeismicArray(object):
         :param plots: List or tuple of desired plots that should be plotted for
          each beamforming window.
          Supported options:
-         "baz_slow_map" for backazimuth-slowness maps for each window,
+         "slowness_baz" for backazimuth-slowness maps for each window,
          "slowness_xy" for slowness_xy maps for each window.
          Further plotting otions are attached to the returned object.
         :rtype: :class:`~obspy.signal.array_analysis.BeamformerResult`
@@ -816,14 +816,14 @@ class SeismicArray(object):
         return self._array_analysis_helper(stream=stream, method="SWP",
                                            frqlow=frqlow, frqhigh=frqhigh,
                                            prefilter=prefilter, plots=plots,
-                                           static3d=static3d,
-                                           vel_corr=vel_corr, wlen=wlen,
+                                           static3d=static3d,array_r=array_response,
+                                           vel_corr=vel_corr, wlen=wlen,wfrac=wfrac,
                                            slx=slx, sly=sly, sls=sls)
 
     def phase_weighted_stack(self, stream, frqlow, frqhigh,
                              prefilter=True, plots=(),
-                             static3d=False,
-                             vel_corr=4.8, wlen=-1, slx=(-10, 10),
+                             static3d=False,array_response=False,
+                             vel_corr=4.8, wlen=-1, wfrac=1.,slx=(-10, 10),
                              sly=(-10, 10), sls=0.5):
         """
         Phase weighted stack analysis.
@@ -854,7 +854,7 @@ class SeismicArray(object):
         :param plots: List or tuple of desired plots that should be plotted for
          each beamforming window.
          Supported options:
-         "baz_slow_map" for backazimuth-slowness maps for each window,
+         "slowness_baz" for backazimuth-slowness maps for each window,
          "slowness_xy" for slowness_xy maps for each window.
          Further plotting otions are attached to the returned object.
         :rtype: :class:`~obspy.signal.array_analysis.BeamformerResult`
@@ -862,13 +862,13 @@ class SeismicArray(object):
         return self._array_analysis_helper(stream=stream, method="PWS",
                                            frqlow=frqlow, frqhigh=frqhigh,
                                            prefilter=prefilter, plots=plots,
-                                           static3d=static3d,
-                                           vel_corr=vel_corr, wlen=wlen,
+                                           static3d=static3d,array_r=array_response,
+                                           vel_corr=vel_corr, wlen=wlen,wfrac=wfrac,
                                            slx=slx, sly=sly, sls=sls)
 
     def delay_and_sum(self, stream, frqlow, frqhigh,
-                      prefilter=True, plots=(), static3d=False,
-                      vel_corr=4.8, wlen=-1, slx=(-10, 10),
+                      prefilter=True, plots=(), static3d=False,array_response=False,
+                      vel_corr=4.8, wlen=-1,wfrac=1., slx=(-10, 10),
                       sly=(-10, 10), sls=0.5):
         """
         Delay and sum analysis.
@@ -899,7 +899,7 @@ class SeismicArray(object):
         :param plots: List or tuple of desired plots that should be plotted for
          each beamforming window.
          Supported options:
-         "baz_slow_map" for backazimuth-slowness maps for each window,
+         "slowness_baz" for backazimuth-slowness maps for each window,
          "slowness_xy" for slowness_xy maps for each window.
          Further plotting otions are attached to the returned object.
         :rtype: :class:`~obspy.signal.array_analysis.BeamformerResult`
@@ -907,13 +907,13 @@ class SeismicArray(object):
         return self._array_analysis_helper(stream=stream, method="DLS",
                                            frqlow=frqlow, frqhigh=frqhigh,
                                            prefilter=prefilter, plots=plots,
-                                           static3d=static3d,
-                                           vel_corr=vel_corr, wlen=wlen,
+                                           static3d=static3d,array_r=array_response,
+                                           vel_corr=vel_corr, wlen=wlen,wfrac=wfrac,
                                            slx=slx, sly=sly, sls=sls)
 
     def fk_analysis(self, stream, frqlow, frqhigh,
-                    prefilter=True, plots=(),
-                    static3d=False, vel_corr=4.8, wlen=-1, wfrac=0.8,
+                    prefilter=True, plots=(),static3d=False,array_response=False,
+                    vel_corr=4.8, wlen=-1, wfrac=0.8,
                     slx=(-10, 10), sly=(-10, 10), sls=0.5):
         """
         FK analysis.
@@ -946,7 +946,7 @@ class SeismicArray(object):
         :param plots: List or tuple of desired plots that should be plotted for
          each beamforming window.
          Supported options:
-         "baz_slow_map" for backazimuth-slowness maps for each window,
+         "slowness_baz" for backazimuth-slowness maps for each window,
          "slowness_xy" for slowness_xy maps for each window.
          Further plotting otions are attached to the returned object.
         :rtype: :class:`~obspy.signal.array_analysis.BeamformerResult`
@@ -955,13 +955,13 @@ class SeismicArray(object):
         return self._array_analysis_helper(stream=stream, method="FK",
                                            frqlow=frqlow, frqhigh=frqhigh,
                                            prefilter=prefilter, plots=plots,
-                                           static3d=static3d,
+                                           static3d=static3d,array_r=array_response,
                                            vel_corr=vel_corr,
                                            wlen=wlen, wfrac=wfrac,
                                            slx=slx, sly=sly, sls=sls)
 
     def _array_analysis_helper(self, stream, method, frqlow, frqhigh,
-                               prefilter=True, static3d=False,
+                               prefilter=True, static3d=False,array_r=False,
                                vel_corr=4.8, wlen=-1, wfrac=0.8, slx=(-10, 10),
                                sly=(-10, 10), sls=0.5,
                                plots=()):
@@ -1000,7 +1000,7 @@ class SeismicArray(object):
         :param plots: List or tuple of desired plots that should be plotted for
          each beamforming window.
          Supported options:
-         "baz_slow_map" for backazimuth-slowness maps for each window,
+         "slowness_baz" for backazimuth-slowness maps for each window,
          "slowness_xy" for slowness_xy maps for each window.
          Further plotting otions are attached to the returned object.
         :rtype: :class:`~obspy.signal.array_analysis.BeamformerResult`
@@ -1009,7 +1009,7 @@ class SeismicArray(object):
         if method not in ("FK", "DLS", "PWS", "SWP"):
             raise ValueError("Invalid method: ''" % method)
 
-        if "baz_slow_map" in plots:
+        if "slowness_baz" in plots:
             make_slow_map = True
         else:
             make_slow_map = False
@@ -1064,6 +1064,15 @@ class SeismicArray(object):
         # and use that instead to avoid the try ... finally.
         invbkp = copy.deepcopy(self.inventory)
         self.inventory_cull(st_workon)
+        if array_r:
+            sll = np.max(np.absolute([sllx,slly,slmx,slmy]))
+            frqstep = (frqhigh-frqlow)/10.
+            transff =self.array_transfer_function_freqslowness(sll, sls,frqlow, frqhigh,frqstep)
+            print(np.max(transff))
+        else:
+            transff = None
+
+
         try:
             if method == 'FK':
                 kwargs = dict(
@@ -1106,8 +1115,8 @@ class SeismicArray(object):
                 start = UTCDateTime()
                 outarr = self._beamforming(st_workon, **kwargs)
                 print("Total time in routine: %f\n" % (UTCDateTime() - start))
-                t, rel_power, baz, slow_x, slow_y, slow = outarr.T
-                abs_power = None
+                t, rel_power,abs_power, baz, slow = outarr.T
+                #abs_power = None
 
             baz[baz < 0.0] += 360
             if wlen < 0:
@@ -1130,13 +1139,13 @@ class SeismicArray(object):
                                        method=method)
 
             # now let's do the plotting
-            if "baz_slow_map" in plots:
-                plot_array_analysis(outarr, sllx, slmx, slly, slmy, sls,
-                                     filename_patterns, True, method,
+            if "slowness_baz" in plots:
+                plot_array_analysis(outarr,transff, sllx, slmx, slly, slmy, sls,
+                                     filename_patterns, True, method,array_r,
                                      st_workon, starttime, wlen, endtime)
             if "slowness_xy" in plots:
-                plot_array_analysis(outarr, sllx, slmx, slly, slmy, sls,
-                                     filename_patterns, False, method,
+                plot_array_analysis(outarr,transff, sllx, slmx, slly, slmy, sls,
+                                     filename_patterns, False, method,array_r,
                                      st_workon, starttime, wlen, endtime)
             plt.show()
             # Return the beamforming results to allow working more on them,
@@ -1939,7 +1948,8 @@ class SeismicArray(object):
         """
         import matplotlib.pyplot as plt
         ranges = np.arange(-lim, lim + step, step)
-        plt.pcolor(ranges, ranges, transff.T, cmap=cm.viridis)
+        #plt.pcolor(ranges, ranges, transff.T, cmap=cm.viridis)
+        plt.contour(ranges, ranges, transff.T, 10)
         plt.colorbar()
         plt.clim(vmin=0., vmax=1.)
         plt.xlim(-lim, lim)
@@ -1999,8 +2009,9 @@ class SeismicArray(object):
         else:
             raise TypeError('Parameter slim must either be a float '
                             'or a tuple of length 4.')
-        geometry = self._geometry_dict_to_array(self._get_geometry_xyz(
-            **self.center_of_gravity))
+        #geometry = self._geometry_dict_to_array(self._get_geometry_xyz(
+        #    **self.center_of_gravity))
+        geometry = self._geometry_dict_to_array(self.geometry)
         npx = int(np.ceil((pxmax + pstep / 10. - pxmin) / pstep))
         npy = int(np.ceil((pymax + pstep / 10. - pymin) / pstep))
         transff = np.empty((npx, npy))
@@ -2133,7 +2144,7 @@ class SeismicArray(object):
         if nsamp <= 0:
             print('Data window too small for slowness grid')
             print('Must exit')
-            quit()
+            sys.exit()
 
         nstep = int(nsamp * win_frac)
 
@@ -2267,8 +2278,7 @@ class SeismicArray(object):
                 slow = 1e-8
             azimut = 180 * math.atan2(slow_x, slow_y) / math.pi
             baz = azimut % -360 + 180
-            res.append(np.array([newstart.timestamp, abspow, baz, slow_x,
-                                 slow_y, slow]))
+            res.append(np.array([newstart.timestamp, abspow, abspow, baz, slow]))
             if verbose:
                 print(newstart, (newstart + (nsamp / fs)), res[-1][1:])
             if (newstart + (nsamp + nstep) / fs) > etime:
@@ -2286,7 +2296,6 @@ class SeismicArray(object):
             msg = "Option timestamp must be one of 'julsec', or 'mlabday'"
             raise ValueError(msg)
         return np.array(res)
-    #    return(baz,slow,slow_x,slow_y,abspow_map,beam_max)
 
     def _vespagram_baz(self, stream, time_shift_table, starttime, endtime,
                        method="DLS", nthroot=1):

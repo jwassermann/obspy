@@ -26,8 +26,8 @@ from obspy.geodetics import degrees2kilometers
 from obspy.imaging import cm
 
 
-def plot_array_analysis(out, sllx, slmx, slly, slmy, sls,
-                         filename_patterns, baz_plot, method,
+def plot_array_analysis(out, transff,sllx, slmx, slly, slmy, sls,
+                         filename_patterns, baz_plot, method,array_r,
                          st_workon, starttime, wlen, endtime):
     """
     Some plotting taken out from _array_analysis_helper. Can't do the array
@@ -41,25 +41,20 @@ def plot_array_analysis(out, sllx, slmx, slly, slmy, sls,
     baz[baz < 0.0] += 360
     # now let's do the plotting
     cmap = cm.viridis
-    # we will plot everything in s/deg
-    #slow = degrees2kilometers(slow)
-    #sllx = degrees2kilometers(sllx)
-    #slmx = degrees2kilometers(slmx)
-    #slly = degrees2kilometers(slly)
-    #slmy = degrees2kilometers(slmy)
-    #sls = degrees2kilometers(sls)
 
     numslice = len(t)
     powmap = []
 
     slx = np.arange(sllx - sls, slmx, sls)
     sly = np.arange(slly - sls, slmy, sls)
+    sll = np.max(np.absolute([sllx,slly,slmx,slmy]))
+    slll = np.arange(-sll - sls, sll, sls)
     if baz_plot:
-        maxslowg = np.sqrt(slmx * slmx + slmy * slmy)
+        maxslowg = np.sqrt(2*sll**2)
         bzs = np.arctan2(sls, np.sqrt(
-            slmx * slmx + slmy * slmy)) * 180 / np.pi
-        xi = np.arange(0., maxslowg, sls)
-        yi = np.arange(-180., 180., bzs)
+            2*sll**2)) * 180 / np.pi
+        xi = np.arange(0., 360., bzs)
+        yi = np.arange(0., maxslowg, sls)
         grid_x, grid_y = np.meshgrid(xi, yi)
     # reading in the rel-power maps
     for i in range(numslice):
@@ -75,7 +70,7 @@ def plot_array_analysis(out, sllx, slmx, slly, slmy, sls,
 
     npts = st_workon[0].stats.npts
     df = st_workon[0].stats.sampling_rate
-    t = np.arange(0, npts / df, 1 / df)
+    tt = np.arange(0, npts / df, 1 / df)
 
     # if we choose windowlen > 0. we now move through our slices
     for i in range(numslice):
@@ -85,62 +80,104 @@ def plot_array_analysis(out, sllx, slmx, slly, slmy, sls,
         else:
             en = st + wlen
         print(UTCDateTime(t[i]))
-        # add polar and colorbar axes
+        # add trace  axes
         fig = plt.figure(figsize=(12, 12))
         ax1 = fig.add_axes([0.1, 0.87, 0.7, 0.10])
         # here we plot the first trace on top of the slowness map
         # and indicate the possibiton of the lsiding window as green box
         if method == 'FK':
-            ax1.plot(t, st_workon[0].data, 'k')
+            ax1.plot(tt, st_workon[0].data, 'k')
             if wlen > 0.:
                 try:
                     ax1.axvspan(st, en, facecolor='g', alpha=0.3)
                 except IndexError:
                     pass
         else:
-            t = np.arange(0, len(trace[i]) / df, 1 / df)
-            ax1.plot(t, trace[i], 'k')
+            tt = np.arange(0, len(trace[i]) / df, 1 / df)
+            ax1.plot(tt, trace[i], 'k')
 
         ax1.yaxis.set_major_locator(MaxNLocator(3))
 
-        ax = fig.add_axes([0.10, 0.1, 0.70, 0.7])
 
         # if we have chosen the baz_plot option a re-griding
         # of the sx,sy slowness map is needed
         if baz_plot:
+            ax = fig.add_axes([0.10, 0.1, 0.70, 0.7],polar=True)
+            ax.set_theta_direction(-1)
+            ax.set_theta_zero_location("N")
             slowgrid = []
+            transgrid = []
             power = np.asarray(powmap[i])
             for ix, sx in enumerate(slx):
                 for iy, sy in enumerate(sly):
                     bbaz = np.arctan2(sx, sy) * 180 / np.pi + 180.
-                    if bbaz > 180.:
-                        bbaz = -180. + (bbaz - 180.)
-                    slowgrid.append((np.sqrt(sx * sx + sy * sy), bbaz,
-                                     power[ix, iy]))
+                    if bbaz > 360.:
+                        bbaz -= 360.
+                    if bbaz < 0.:
+                        bbaz += 360.
+                    slowgrid.append((bbaz,np.sqrt(sx * sx + sy * sy),power[ix, iy]))
+            if array_r:
+                for ix, sx in enumerate(slll):
+                    for iy, sy in enumerate(slll):
+                        slow_y = np.cos((baz[i] + 180.) * np.pi / 180.) * slow[i]
+                        slow_x = np.sin((baz[i] + 180.) * np.pi / 180.) * slow[i]
+                        tslow = (np.sqrt((sx+slow_x) *
+                                    (sx+slow_x)+(sy+slow_y) *
+                                    (sy+slow_y)))
+                        tbaz = (np.arctan2(sx+slow_x, sy+slow_y) *
+                                    180 / np.pi + 180.)
+                        if tbaz > 360.:
+                            tbaz -= 360
+                        if tbaz < 0:
+                            tbaz += 360.
+                        transgrid.append((tbaz,tslow, transff[ix, iy]))
+
 
             slowgrid = np.asarray(slowgrid)
-            sl = slowgrid[:, 0]
-            bz = slowgrid[:, 1]
+            sl = slowgrid[:, 1]
+            bz = slowgrid[:, 0]
             slowg = slowgrid[:, 2]
-            grid = interpolate.griddata((sl, bz), slowg,
+            grid = interpolate.griddata((bz,sl), slowg,
                                         (grid_x, grid_y),
                                         method='nearest')
-            ax.pcolormesh(xi, yi, grid, cmap=cmap)
+            ax.pcolormesh(np.radians(xi), yi, grid, cmap=cmap)
+            #ax.contourf(np.radians(xi), yi, grid, cmap=cmap)
+            if array_r:
+                level = np.arange(0.1, 0.7, 0.1)
+                transgrid = np.asarray(transgrid)
+                tsl = transgrid[:, 1]
+                tbz = transgrid[:, 0]
+                transg = transgrid[:, 2]
+                trans = interpolate.griddata((tbz,tsl), transg,
+                                     (grid_x, grid_y),
+                                     method='nearest')
+                ax.contour(np.radians(xi), yi, trans, levels=level, colors='w',alpha=0.5)
 
-            ax.set_xlabel('slowness [s/deg]')
-            ax.set_ylabel('backazimuth [deg]')
-            ax.set_xlim(xi[0], xi[-1])
+
+            ax.set_xticks([0., np.pi/2., np.pi, 3./2.*np.pi])
+            ax.grid(color='w')
+            ax.set_xticklabels(['N', 'E', 'S', 'W'])
+            #ax.set_xlim(0,360)
             ax.set_ylim(yi[0], yi[-1])
         else:
+            ax = fig.add_axes([0.10, 0.1, 0.70, 0.7])
             ax.set_xlabel('slowness [s/deg]')
             ax.set_ylabel('slowness [s/deg]')
-            slow_x = np.cos((baz[i] + 180.) * np.pi / 180.) * slow[i]
-            slow_y = np.sin((baz[i] + 180.) * np.pi / 180.) * slow[i]
+            #this is to plot the vector from 0,0 to maximum
+            slow_y = np.cos((baz[i] + 180.) * np.pi / 180.) * slow[i]
+            slow_x = np.sin((baz[i] + 180.) * np.pi / 180.) * slow[i]
             ax.pcolormesh(slx, sly, powmap[i].T)
-            ax.arrow(0, 0, slow_y, slow_x, head_width=0.005,
+            ax.arrow(0, 0, slow_x, slow_y, head_width=0.005,
                      head_length=0.01, fc='k', ec='k')
-            ax.set_ylim(slx[0], slx[-1])
-            ax.set_xlim(sly[0], sly[-1])
+            if array_r:
+                try:
+                    level = np.arange(0.1, 0.6, 0.1)
+                    ax.contour(slll+slow_x, slll+slow_y, transff.T,10, colors='w',alpha=0.5)
+                except:
+                    pass
+
+            ax.set_xlim(slx[0], slx[-1])
+            ax.set_ylim(sly[0], sly[-1])
         new_time = t[i]
 
         result = "BAZ: %.2f, Slow: %.2f s/deg, Time %s" % (
